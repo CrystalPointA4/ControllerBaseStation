@@ -37,11 +37,11 @@ void setup(void){
   WiFi.onEvent(WiFiEvent);
 
   //LED
-  pinMode(4,OUTPUT);
-  digitalWrite(4,LOW);
+  pinMode(2,OUTPUT);
+  digitalWrite(2,LOW);
 
   //BUTTON
-  pinMode(5,INPUT);
+  pinMode(0,INPUT);
 
   Udp.begin(udpPort);
   
@@ -79,7 +79,7 @@ void loop(void){
     ToggleWifiVisibility(0);
   }
  
-  if(digitalRead(5) == 1 && SSIDVisible == 0)
+  if(digitalRead(0) == 0 && SSIDVisible == 0)
   {
     Serial.println("Button Pressed");
     SSIDVisibleTimeout = millis();
@@ -92,12 +92,12 @@ void ToggleWifiVisibility(char v)
   if(v == 1){
     SSIDVisible = 1;
     WiFi.softAP(WifiSSID, WifiPassword, 6, 0); 
-    digitalWrite(4, HIGH);
+    digitalWrite(2, HIGH);
     Serial.println("Wifi Visible");
   }else if(v == 0){
     SSIDVisible = 0;
     WiFi.softAP(WifiSSID, WifiPassword, 6, 1); 
-    digitalWrite(4, LOW);
+    digitalWrite(2, LOW);
     Serial.println("Wifi Hidden");
   }
 }
