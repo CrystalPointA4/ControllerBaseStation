@@ -14,6 +14,12 @@ char WifiSSID[17];
 
 ip_addr ConnectionList[MAX_CLIENTS] = {0};
 
+
+//Serial buffer string
+String serialInput = "";
+boolean serialDataReady = false;
+
+
 //UDP server (receiving) setup
 unsigned int udpPort = 2730;
 byte packetBuffer[512]; //udp package buffer
@@ -22,10 +28,10 @@ WiFiUDP Udp;
 void WiFiEvent(WiFiEvent_t event) {
     switch(event) {
         case WIFI_EVENT_SOFTAPMODE_STACONNECTED:
-            Serial.println("NEW CONNECTED");
+            Serial.println("0|NEW CONNECTED");
             break;
         case WIFI_EVENT_SOFTAPMODE_STADISCONNECTED:
-            Serial.println("DISCONNECTED");
+            Serial.println("0|DISCONNECTED");
             break;
     }
 }
@@ -47,6 +53,8 @@ void setup(void){
   
   delay(100);
   setupWifi();
+
+  serialInput.reserve(200);
 }
 
 int SSIDVisibleTimeout = 0;
@@ -55,23 +63,23 @@ char SSIDVisible = 0;
 void loop(void){
   int noBytes = Udp.parsePacket();
   if ( noBytes ) {
-    Serial.print(millis() / 1000);
-    Serial.print(":Packet of ");
-    Serial.print(noBytes);
-    Serial.print(" received from ");
+    Serial.print("1|");
     Serial.print(Udp.remoteIP());
-    Serial.print(":");
-    Serial.print(Udp.remotePort());
-    Serial.print(" - ");
+    Serial.print("|");
     // We've received a packet, read the data from it
     Udp.read(packetBuffer,noBytes); // read the packet into the buffer
 
-    // display the packet contents in HEX
     for (int i=1;i<=noBytes;i++){
       Serial.printf("%c", packetBuffer[i-1]); 
     }
     Serial.println();
   }  
+
+  if (serialDataReady) {
+    serialInput = "";
+    serialDataReady = false;
+    //todo: get type number and execute from command array
+  }
   
   if(SSIDVisible == 1 && (SSIDVisibleTimeout + 30000) < millis())
   {
@@ -84,6 +92,20 @@ void loop(void){
     Serial.println("Button Pressed");
     SSIDVisibleTimeout = millis();
     ToggleWifiVisibility(1);
+  }
+}
+
+void serialEvent() {
+  while (Serial.available()) {
+    // get the new byte:
+    char inChar = (char)Serial.read();
+    // add it to the inputString:
+    serialInput += inChar;
+    // if the incoming character is a newline, set a flag
+    // so the main loop can do something about it:
+    if (inChar == '\n') {
+      serialDataReady = true;
+    }
   }
 }
 
@@ -201,4 +223,21 @@ void generateWiFiPassword()
   Serial.print("Wifi password: ");  
   Serial.println(WifiPassword);
 }
+
+
+//Serial commands
+
+void versionInfo(String data){
+  Serial.println("Version 1.0");
+}
+
+void sendRumble(String data);
+
+void sendShock(String data);
+
+void (*commandList[3])(String data) = {
+    versionInfo,
+    sendRumble,
+    sendShock
+};
 
