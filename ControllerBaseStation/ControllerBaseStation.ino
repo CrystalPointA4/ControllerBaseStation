@@ -12,35 +12,27 @@ String WifiSSIDPrefix = "CrystalPoint";
 char WifiPassword[10];
 char WifiSSID[17];
 
-ip_addr ConnectionList[MAX_CLIENTS] = {0};
+struct controllerInformation{
+  IPAddress ipaddr;
+  u_long lastPackage;
+};
 
+controllerInformation ConnectionList[MAX_CLIENTS];
+u_long lastDisconnectionCheck = 0;
 
 //Serial buffer string
 String serialInput = "";
 boolean serialDataReady = false;
 
-
 //UDP server (receiving) setup
 unsigned int udpPort = 2730;
 byte packetBuffer[512]; //udp package buffer
 WiFiUDP Udp;
-
-void WiFiEvent(WiFiEvent_t event) {
-    switch(event) {
-        case WIFI_EVENT_SOFTAPMODE_STACONNECTED:
-            Serial.println("0|NEW CONNECTED");
-            break;
-        case WIFI_EVENT_SOFTAPMODE_STADISCONNECTED:
-            Serial.println("0|DISCONNECTED");
-            break;
-    }
-}
+boolean started = false;
 
 void setup(void){
   Serial.begin(115200);
   Serial.println();
-
-  WiFi.onEvent(WiFiEvent);
 
   //LED
   pinMode(2,OUTPUT);
@@ -63,24 +55,32 @@ char SSIDVisible = 0;
 void loop(void){
   int noBytes = Udp.parsePacket();
   if ( noBytes ) {
-    Serial.print("1|");
-    Serial.print(Udp.remoteIP());
-    Serial.print("|");
-    // We've received a packet, read the data from it
-    Udp.read(packetBuffer,noBytes); // read the packet into the buffer
-
-    for (int i=1;i<=noBytes;i++){
-      Serial.printf("%c", packetBuffer[i-1]); 
+    Udp.read(packetBuffer,noBytes); 
+    if(started){
+      Serial.printf("1|%d|", getControllerId(Udp.remoteIP()));
+      for (int i=1;i<=noBytes;i++){
+        Serial.printf("%c", packetBuffer[i-1]); 
+      }
+      Serial.println();
+    }else{
+      getControllerId(Udp.remoteIP());
     }
-    Serial.println();
   }  
 
   if (serialDataReady) {
+    Serial.println("0|" + serialInput);
+    if(serialInput == "start"){
+      started = true;
+    }else if(serialInput == "stop"){
+      started = false;
+    }else if(serialInput == "clientlist"){
+      getControllerList();
+    }
     serialInput = "";
     serialDataReady = false;
-    //todo: get type number and execute from command array
   }
-  
+  if (Serial.available()) serialEvent();
+
   if(SSIDVisible == 1 && (SSIDVisibleTimeout + 30000) < millis())
   {
     SSIDVisibleTimeout = 0;
@@ -89,22 +89,25 @@ void loop(void){
  
   if(digitalRead(0) == 0 && SSIDVisible == 0)
   {
-    Serial.println("Button Pressed");
+    Serial.println("0|Button Pressed");
     SSIDVisibleTimeout = millis();
     ToggleWifiVisibility(1);
   }
+
+  if(millis() - lastDisconnectionCheck > 10000){
+    checkControllerDisconnect();
+  }
+  
 }
 
 void serialEvent() {
   while (Serial.available()) {
     // get the new byte:
     char inChar = (char)Serial.read();
-    // add it to the inputString:
-    serialInput += inChar;
-    // if the incoming character is a newline, set a flag
-    // so the main loop can do something about it:
-    if (inChar == '\n') {
+    if (inChar == '\n' || inChar == '\r') {
       serialDataReady = true;
+    }else{
+      serialInput += inChar;
     }
   }
 }
@@ -115,73 +118,42 @@ void ToggleWifiVisibility(char v)
     SSIDVisible = 1;
     WiFi.softAP(WifiSSID, WifiPassword, 6, 0); 
     digitalWrite(2, HIGH);
-    Serial.println("Wifi Visible");
+    Serial.println("0|Wifi Visible");
   }else if(v == 0){
     SSIDVisible = 0;
     WiFi.softAP(WifiSSID, WifiPassword, 6, 1); 
     digitalWrite(2, LOW);
-    Serial.println("Wifi Hidden");
+    Serial.println("0|Wifi Hidden");
   }
 }
 
-void RepopulateConnectionList(char n)
-{
-  struct station_info *stat_info;
-  stat_info = wifi_softap_get_station_info();
-  
-  //Controller disconnected
-  if(n == 0){
-    Serial.println("Old controller disconnected..");
-    for(char i=0; i < MAX_CLIENTS; i++){
-      char missingIP = 0;
-      while (stat_info != NULL) {
-        if(ip_addr_cmp(&ConnectionList[i], &stat_info->ip)){
-           missingIP = 255;
-           break;
-        }else{
-          missingIP = i;
-        }
-
-        //str += IPAddress((stat_info->ip).addr).toString();
-        stat_info = STAILQ_NEXT(stat_info, next);
-      }
-
-      if(missingIP != 255 && ConnectionList[missingIP].addr != 0){
-        //Ip NOT found; This controller is gone. 
-        ConnectionList[missingIP].addr = 0;
-        Serial.printf("Controller %d disconnected \n\r", missingIP);
-      }
+char getControllerId(IPAddress ipaddr){
+  for(char i=0; i < MAX_CLIENTS; i++){  
+    if(ConnectionList[i].ipaddr == ipaddr){ //Yay, controller found. Return the id.
+      ConnectionList[i].lastPackage = millis();
+      return i;  
     }
   }
-  //new controller
-  else if(n == 1){
-    Serial.println("New controller connected..");
-    while (stat_info != NULL){
-      Serial.println(IPAddress((stat_info->ip).addr).toString());
-      char addedIP = 0;
-      for(char i=0; i < MAX_CLIENTS; i++){
-        Serial.println(ip_addr_cmp(&ConnectionList[i], &stat_info->ip));
-        if(ip_addr_cmp(&ConnectionList[i], &stat_info->ip)){
-           addedIP = 255;
-           break;
-        }else{
-          addedIP = i;
-        }
-      }
-      if(addedIP != 255){
-        //Ip NOT found; This controller is new. 
-        for(char i=0; i < MAX_CLIENTS; i++){
-          if(ConnectionList[i].addr == 0){
-            ConnectionList[i] = stat_info->ip;
-            Serial.printf("Controller connect, place of index: %d \n\r", i);
-            break;
-          }
-        }
-      }
-     Serial.println("---");
-     stat_info = STAILQ_NEXT(stat_info, next);
+  //We didn't found the controller, so add it and return a new id.
+  for(char i=0; i < MAX_CLIENTS; i++){  
+    if(ConnectionList[i].ipaddr == INADDR_NONE){ 
+      ConnectionList[i].ipaddr = ipaddr;
+      ConnectionList[i].lastPackage = millis();
+      Serial.printf("2|connected|%d\n\r", i);
+      return i;  
+    }
   }
-} 
+  //No room for new controllers. 
+  return -1;  
+}
+
+void checkControllerDisconnect(){
+  for(char i=0; i < MAX_CLIENTS; i++){  
+    if(ConnectionList[i].ipaddr != INADDR_NONE && millis() - ConnectionList[i].lastPackage > 10000){  //Controller didn't send any messages last 10 seconds, disconnected.
+      ConnectionList[i].ipaddr = INADDR_NONE; 
+      Serial.printf("2|disconnected|%d\n\r", i);
+    }
+  }  
 }
 
 void setupWifi(void){
@@ -220,24 +192,25 @@ void generateWiFiPassword()
   for (int i=0; i < 10; i++)
     WifiPassword[i] = WifiStringPassword.charAt(i);
   WifiPassword[9] = '\0';
-  Serial.print("Wifi password: ");  
+  Serial.print("0|Wifi password: ");  
   Serial.println(WifiPassword);
 }
 
 
 //Serial commands
 
-void versionInfo(String data){
-  Serial.println("Version 1.0");
+void getControllerList(){
+  Serial.printf("3|");
+  for(char i=0; i < MAX_CLIENTS; i++){  
+    if(ConnectionList[i].ipaddr != INADDR_NONE){ 
+      Serial.printf("%d|", i);
+    }
+  }
+  Serial.println();  
 }
 
 void sendRumble(String data);
 
 void sendShock(String data);
 
-void (*commandList[3])(String data) = {
-    versionInfo,
-    sendRumble,
-    sendShock
-};
 
