@@ -26,7 +26,7 @@ boolean serialDataReady = false;
 
 //UDP server (receiving) setup
 unsigned int udpPort = 2730;
-byte packetBuffer[512]; //udp package buffer
+char packetBuffer[50]; //udp package buffer
 WiFiUDP Udp;
 boolean started = false;
 
@@ -75,6 +75,17 @@ void loop(void){
       started = false;
     }else if(serialInput == "clientlist"){
       getControllerList();
+    }else if(serialInput[0] == '1' && serialInput.length() == 14){ //Rumble
+      char controllerId = atoi(&serialInput[2]);
+      if(isControllerConnected(controllerId) == 1){
+        Serial.println("0|Controller connected, rumble sended");
+          serialInput.toCharArray(packetBuffer, 50);
+          Udp.beginPacket(ConnectionList[controllerId].ipaddr, udpPort);
+          Udp.write(packetBuffer);
+          Udp.endPacket();
+      }else{
+        Serial.println("0|Controller not connected");
+      }
     }
     serialInput = "";
     serialDataReady = false;
@@ -156,6 +167,13 @@ void checkControllerDisconnect(){
   }  
 }
 
+char isControllerConnected(char id){
+  if(id <= MAX_CLIENTS && id >= 0 && ConnectionList[id].ipaddr != INADDR_NONE ){ 
+      return 1;
+  }
+  return 0;    
+}
+
 void setupWifi(void){
   WiFi.disconnect(true);
   WiFi.mode(WIFI_AP);
@@ -208,9 +226,3 @@ void getControllerList(){
   }
   Serial.println();  
 }
-
-void sendRumble(String data);
-
-void sendShock(String data);
-
-
